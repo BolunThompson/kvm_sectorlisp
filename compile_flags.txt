@@ -1,0 +1,6 @@
+-std=c11
+-O3
+-Wall
+-Wextra
+-Wpedantic
+-Werror

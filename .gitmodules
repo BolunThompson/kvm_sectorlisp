@@ -1,0 +1,4 @@
+[submodule "sectorlisp"]
+	path = sectorlisp
+	url = https://github.com/jart/sectorlisp
+
