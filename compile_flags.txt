@@ -1,4 +1,4 @@
--std=c11
+-std=c17
 -O3
 -Wall
 -Wextra

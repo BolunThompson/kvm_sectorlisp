@@ -6,41 +6,21 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <termios.h>
 #include <unistd.h>
 #include <wchar.h>
 
+#define SECTORLISP_PATH "sectorlisp/sectorlisp.bin"
+#define RAM_SIZE 0x10000
 #define GET_IO_ADDR(kvm_run) (((uint8_t *)kvm_run) + kvm_run->io.data_offset)
 
 // initially planned to use iconv but the API is too clunky
 // taken from https://github.com/Journeyman1337/cp437.h/tree/main
-// TODO: Dw repeated symbols
-static const wchar_t *const CP_WCHAR_LOOKUP_TABLE =
-    L"\0☺☻♥♦♣♠•◘○◙♂♀♀♪♫☼►◄↕‼¶§▬↨↑↓→←∟↔▲▼"
-    L" !\"#$%&'()*+,-./0123456789:;<=>?@ABC"
-    L"DEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefg"
-    L"hijklmnopqrstuvwxyz{|}~⌂Çüéâäàåçêëèïî"
-    L"ìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒"
-    L"▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓"
-    L"╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ";
-
-static inline wchar_t cp437_to_wchar(unsigned char c) {
-  return CP_WCHAR_LOOKUP_TABLE[c];
-}
-
-static inline unsigned char wchar_to_cp437(wchar_t in) {
-  // return unchanged if ascii. It's fine if it was unprintable.
-  if (in <= 127)
-    return in;
-  unsigned char c = 0;
-  do {
-    if (cp437_to_wchar(c) == in)
-      return c;
-  } while (++c);
-  return '?';
-}
+// with basic ascii control chars added
 
 // TODO: Is this good kvm api use? Maybe ask on the irc.
 int main(void) {
@@ -49,13 +29,25 @@ int main(void) {
   int ret;
   // https://lwn.net/Articles/658511/ and https://lwn.net/Articles/658512/
   // guided me through this -- thanks!
+
+  // TODO: Dw backspace displaying hidden character -- it should display a cp437
+  // char
+  // Make terminal worse to emulate text-mode VGA
+  struct termios oldt, newt;
+  tcgetattr(STDIN_FILENO, &oldt);
+  newt = oldt;
+
+  // read characters one-by-one without built-in echo
+  newt.c_lflag &= ~(ICANON | ECHO);
+  tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+
   int kvm = open("/dev/kvm", O_RDWR);
   if (kvm == -1)
     err(1, "/dev/kvm");
 
-  int sectorlisp = open("sectorlisp.rom", O_RDONLY);
-  if (sectorlisp == -1)
-    err(1, "sectorlisp.rom");
+  int slisp_fd = open(SECTORLISP_PATH, O_RDONLY);
+  if (slisp_fd == -1)
+    err(1, SECTORLISP_PATH);
 
   // TODO: How do I check for KVM existence and the right version, properly?
   // TODO: Should I check for extensions? I use KVM_CAP_USER_MEMORY for the
@@ -64,27 +56,33 @@ int main(void) {
   if (vmfd == -1)
     err(1, "KVM_CREATE_VM");
 
-  // map 64 KiB padded sectorlisp as memory
-  void *mem =
-      mmap(NULL, 0x10000, PROT_READ | PROT_WRITE, MAP_PRIVATE, sectorlisp, 0);
+  // map empty memory
+  void *mem = mmap(NULL, RAM_SIZE, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+  // TODO: Is noreserve necessary?
   if (mem == MAP_FAILED)
     err(1, "memory mmap");
   struct kvm_userspace_memory_region region = {
       .slot = 0,
-      .guest_phys_addr = 0x00000,
+      .guest_phys_addr = 0,
       // Must be aligned to page boundaries! (increments of 0x1000)
-      .memory_size = 0x10000,
+      .memory_size = RAM_SIZE,
       .userspace_addr = (uint64_t)mem,
   };
   ret = ioctl(vmfd, KVM_SET_USER_MEMORY_REGION, &region);
   if (ret == -1)
     err(1, "KVM_SET_USER_MEMORY_REGION");
 
-  // by default this just loads standard realmode x86 system.
-  // get vcpu
   int vcpufd = ioctl(vmfd, KVM_CREATE_VCPU, 0);
   if (vcpufd == -1)
     err(1, "KVM_CREATE_VCPU");
+
+  void *sectorlisp = mmap(NULL, 512, PROT_READ, MAP_PRIVATE, slisp_fd, 0);
+  memcpy((uint8_t *)mem + 0x7c00, sectorlisp, 512);
+  munmap(sectorlisp, 512);
+  close(slisp_fd);
+  // by default this just loads standard realmode x86 system.
+  // get vcpu
 
   // get size of vcpu metadata (mostly kvm_run struct)
   int mmap_size = ioctl(kvm, KVM_GET_VCPU_MMAP_SIZE, NULL);
@@ -107,6 +105,11 @@ int main(void) {
   if (ret == -1)
     err(1, "KVM_GET_SREGS");
   // segment where the boot sector is loaded
+  // TODO: Is the following line necessary? I don't think so b/c
+  //       these are the defaults.
+  // sregs.cs.selector = sregs.ss.selector = sregs.ss.base =
+  //     sregs.ds.selector = sregs.ds.base = sregs.es.selector = sregs.es.base =
+  //         sregs.fs.selector = sregs.fs.base = sregs.gs.selector = 0;
   sregs.cs.base = 0x7c0;
   // TODO: is this necessary? I assume the defaults are sane, and we're only
   // running one program.
@@ -133,19 +136,6 @@ int main(void) {
   if (ret == -1)
     err(1, "KVM_SET_REGS");
 
-  // TODO: how to unregister mmio?
-  // if coalesced mmio exists
-  // Doesn't work:
-  // struct kvm_coalesced_mmio_zone mmio = {
-  //     .addr = 0x00000,
-  //     .size = 0x10000,
-  // };
-  // ret = ioctl(vmfd, KVM_UNREGISTER_COALESCED_MMIO, &mmio);
-  // if (ret == -1)
-  //   err(1, "KVM_UNREGISTER_COALESCED_MMIO");
-  // Try 2, kvm_pre_fault_memory, doesn't work b/c it's not supported in my linux
-  // kernel version
-
   // the first ljmp jumps to 0x7c37. The disasembler doesn't list this
   // instruction -- it incorrectly disassmebles it as starting at 0x7c36. (TODO:
   // Why? Something to do with x86 encoding?)
@@ -170,12 +160,14 @@ int main(void) {
       // count is how many messages were sent
       if (run->io.direction == KVM_EXIT_IO_OUT && run->io.size == 1 &&
           run->io.port == 0xEE && run->io.count == 1) {
-        printf("put_io\n");
-        putwchar(*GET_IO_ADDR(run));
+        putchar(*GET_IO_ADDR(run));
       } else if (run->io.direction == KVM_EXIT_IO_IN && run->io.size == 1 &&
                  run->io.port == 0xEE && run->io.count == 1) {
-        printf("get_io\n");
-        *GET_IO_ADDR(run) = wchar_to_cp437(getwchar());
+        // TODO: Change to better solution
+        char c = getchar();
+        if (c == 'q')
+          goto cleanup;
+        *GET_IO_ADDR(run) = c;
       } else
         errx(
             1,
@@ -198,16 +190,23 @@ int main(void) {
       // op rn Ideally, I could ioctl kvm into not believing this is mmio. Else,
       // just suppress this error like how I am doing
       // TODO: Why? See https://www.kernel.org/doc/html/v5.7/virt/kvm/mmu.html
-      warnx("0x%04llx: unhandled KVM_EXIT_MMIO with first value %d, phys addr "
-            "of 0x%llx, "
-            "len %d, %%si of 0x%llx, is_write '%s'",
-            regs.rip, run->mmio.data[0], run->mmio.phys_addr, run->mmio.len,
-            regs.rsi, run->mmio.is_write ? "true" : "false");
+      errx(1,
+           "0x%04llx: unhandled KVM_EXIT_MMIO with first value %d,"
+           "len %d, %%si of 0x%llx, is_write '%s'",
+           regs.rip, run->mmio.data[0], run->mmio.len, regs.rsi,
+           run->mmio.is_write ? "true" : "false");
       break;
+    case KVM_EXIT_HLT:
+      printf("0x%04llx: hlt\n", regs.rip);
+      goto cleanup;
     default:
       errx(1, "0x%04llx: exit_reason = 0x%x", regs.rip, run->exit_reason);
     }
   }
-  // TODO: Cleanup? Do I need to?
+// TODO: Add stuff
+cleanup:
+  tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+  munmap(mem, RAM_SIZE);
+  close(kvm);
   return 0;
 }

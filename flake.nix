@@ -18,27 +18,18 @@
     in
     {
       devShells = forAllSystems ({ pkgs }: {
-        default = pkgs.mkShellNoCC {
+        default = pkgs.mkShell {
           name = "KVM Sectorlisp Shell";
           # TODO: Which of these do i actually need?
           nativeBuildInputs = with pkgs; [
-            gnat # with gcc (also for coreboot)
-            # to bootstrap coreboot
-            pkg-config
-            ncurses
-            bison
-            curl
-            flex
-            git
-            gnat
-            openssl
-            m4
-            zlib
+            gnused
           ];
           packages = with pkgs; [
             clang-tools
+            gdb
             binutils
             blink
+            git
           ];
         };
       }
