@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <err.h>
 #include <fcntl.h>
 #include <linux/kvm.h>
@@ -7,14 +8,15 @@
 #include <stdlib.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <wchar.h>
 
-#define BIOS_PATH "coreboot.rom"
-// TODO: explain line.
 #define GET_IO_ADDR(kvm_run) (((uint8_t *)kvm_run) + kvm_run->io.data_offset)
-// initially planned to use iconv but the API is too clunky
 
+// initially planned to use iconv but the API is too clunky
 // taken from https://github.com/Journeyman1337/cp437.h/tree/main
+// TODO: Dw repeated symbols
 static const wchar_t *const CP_WCHAR_LOOKUP_TABLE =
     L"\0☺☻♥♦♣♠•◘○◙♂♀♀♪♫☼►◄↕‼¶§▬↨↑↓→←∟↔▲▼"
     L" !\"#$%&'()*+,-./0123456789:;<=>?@ABC"
@@ -29,9 +31,9 @@ static inline wchar_t cp437_to_wchar(unsigned char c) {
 }
 
 static inline unsigned char wchar_to_cp437(wchar_t in) {
-  // return it unchanged if ascii. It's fine if it's unprintable.
+  // return unchanged if ascii. It's fine if it was unprintable.
   if (in <= 127)
-    return (unsigned char)in;
+    return in;
   unsigned char c = 0;
   do {
     if (cp437_to_wchar(c) == in)
@@ -41,71 +43,42 @@ static inline unsigned char wchar_to_cp437(wchar_t in) {
 }
 
 // TODO: Is this good kvm api use? Maybe ask on the irc.
-int main(int argc, char **argv) {
+int main(void) {
   // TODO: Is this the correct formatting? It's a bit dense for my taste.
-  // TODO: Somehow put slisp into
   // TODO: How to properly cite licenses?
-  // read sectorlisp bin
   int ret;
-  // TODO: Usage?
-  if (argc > 2) {
-    errx(1, "0 or 1 arguments expected");
-  }
-  char *coreboot_path = argc == 2 ? argv[1] : BIOS_PATH;
-
   // https://lwn.net/Articles/658511/ and https://lwn.net/Articles/658512/
   // guided me through this -- thanks!
   int kvm = open("/dev/kvm", O_RDWR);
   if (kvm == -1)
     err(1, "/dev/kvm");
 
-  int coreboot = open(coreboot_path, O_RDONLY);
-  if (coreboot == -1)
-    err(1, "%s", coreboot_path);
+  int sectorlisp = open("sectorlisp.rom", O_RDONLY);
+  if (sectorlisp == -1)
+    err(1, "sectorlisp.rom");
 
   // TODO: How do I check for KVM existence and the right version, properly?
   // TODO: Should I check for extensions? I use KVM_CAP_USER_MEMORY for the
-  // memory region Initializes the first segment of memory with the bios. Areas
-  // not used by the bios have been zeroed out.
-  // TODO: Write about bios troubles.
-  // Initially I thought everything is included; it's not.
-  // Then I tried to figure out how to load stuff with CBFS with seabios
+  // memory region.
   int vmfd = ioctl(kvm, KVM_CREATE_VM, 0);
   if (vmfd == -1)
     err(1, "KVM_CREATE_VM");
 
-  void *mem;
-  struct kvm_userspace_memory_region region;
-  // size of coreboot. The real mode payload will only have access to the first
-  // 0x100000 bytes.
-
-  // Why???
-  mem = mmap(NULL, 0xffbfffff, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  // map 64 KiB padded sectorlisp as memory
+  void *mem =
+      mmap(NULL, 0x10000, PROT_READ | PROT_WRITE, MAP_PRIVATE, sectorlisp, 0);
   if (mem == MAP_FAILED)
     err(1, "memory mmap");
-  region = (struct kvm_userspace_memory_region){
+  struct kvm_userspace_memory_region region = {
       .slot = 0,
-      .guest_phys_addr = 0,
-      .memory_size = 0xffbfffff,
+      .guest_phys_addr = 0x00000,
+      // Must be aligned to page boundaries! (increments of 0x1000)
+      .memory_size = 0x10000,
       .userspace_addr = (uint64_t)mem,
   };
   ret = ioctl(vmfd, KVM_SET_USER_MEMORY_REGION, &region);
   if (ret == -1)
-    err(1, "KVM_SET_USER_MEMORY_REGION memory");
-
-  mem = mmap(NULL, 0x400000, PROT_READ | PROT_WRITE, MAP_PRIVATE, coreboot, 0);
-  if (mem == MAP_FAILED)
-    err(1, "BIOS mmap");
-  // NOTE: in qemu memdump, coreboot starts at 0x789c4dd
-  region = (struct kvm_userspace_memory_region){
-      .slot = 1,
-      .guest_phys_addr = 0xffbfffff,
-      .memory_size = 0x400000,
-      .userspace_addr = (uint64_t)mem,
-  };
-  ret = ioctl(vmfd, KVM_SET_USER_MEMORY_REGION, &region);
-  if (ret == -1)
-    err(1, "KVM_SET_USER_MEMORY_REGION bios");
+    err(1, "KVM_SET_USER_MEMORY_REGION");
 
   // by default this just loads standard realmode x86 system.
   // get vcpu
@@ -125,48 +98,116 @@ int main(int argc, char **argv) {
   // Interestingly, sgabios was built by a google engineer for early boot
   // debugging of (now legacy) datacenter systems!
 
-  // rip, cs and flags default to standard x86 values (reset vector and 0x2)
-  // but this is still crashing
-  // Same with sregs?
-  struct kvm_sregs kvm_sregs;
-  ioctl(vcpufd, KVM_GET_SREGS, &kvm_sregs);
+  // I'm getting the sregs because KVM sets them to special values on init
+  // The main one is setting the flags register to 0x2 (required by x86)
+  // I'm changing them to set the cs and ip regs to where I loaded sectorlisp
+  // in memory
+  struct kvm_sregs sregs;
+  ret = ioctl(vcpufd, KVM_GET_SREGS, &sregs);
+  if (ret == -1)
+    err(1, "KVM_GET_SREGS");
+  // segment where the boot sector is loaded
+  sregs.cs.base = 0x7c0;
+  // TODO: is this necessary? I assume the defaults are sane, and we're only
+  // running one program.
+  // where the segment is in the global descriptor table
+  sregs.cs.selector = 0;
+  ret = ioctl(vcpufd, KVM_SET_SREGS, &sregs);
+  if (ret == -1)
+    err(1, "KVM_SET_SREGS");
+
+  struct kvm_regs regs;
+  ret = ioctl(vcpufd, KVM_GET_REGS, &regs);
+  // TODO: regs.rdx is set to 0x600 by default -- why?
+  if (ret == -1)
+    err(1, "KVM_GET_REGS");
+  // TODO: remove if unncessary
+  regs.rip = 0; // start of program
+  regs.rdi = 0; // disk number
+
+  // TODO: does it do anything to disable interrupts? I don't think so
+  // could an interrupt be called randomly by the cpu and cause problms b/c of a
+  // zeroed IDT? flags default to 0x2, which means that interrupts are disabled
+  // (and the CPU's in ring 0)
+  ret = ioctl(vcpufd, KVM_SET_REGS, &regs);
+  if (ret == -1)
+    err(1, "KVM_SET_REGS");
+
+  // TODO: how to unregister mmio?
+  // if coalesced mmio exists
+  // Doesn't work:
+  // struct kvm_coalesced_mmio_zone mmio = {
+  //     .addr = 0x00000,
+  //     .size = 0x10000,
+  // };
+  // ret = ioctl(vmfd, KVM_UNREGISTER_COALESCED_MMIO, &mmio);
+  // if (ret == -1)
+  //   err(1, "KVM_UNREGISTER_COALESCED_MMIO");
+  // Try 2, kvm_pre_fault_memory, doesn't work b/c it's not supported in my linux
+  // kernel version
+
+  // the first ljmp jumps to 0x7c37. The disasembler doesn't list this
+  // instruction -- it incorrectly disassmebles it as starting at 0x7c36. (TODO:
+  // Why? Something to do with x86 encoding?)
 
   while (true) {
-    ioctl(vcpufd, KVM_RUN, NULL);
+    // runs UNTIL exit (doesn't stop at each instr).
+    ret = ioctl(vcpufd, KVM_RUN, NULL);
+    // IP is now set at the last ran instruction's
     if (ret == -1)
       err(1, "KVM_RUN");
+    ret = ioctl(vcpufd, KVM_GET_REGS, &regs);
+    if (ret == -1)
+      err(1, "KVM_GET_REGS 2");
+
+    ret = ioctl(vcpufd, KVM_GET_SREGS, &sregs);
+    if (ret == -1)
+      err(1, "KVM_GET_SREGS 2");
 
     switch (run->exit_reason) {
     case KVM_EXIT_IO:
-      // size is the size of each message (1, 2 or 4 bytes) and count is how
-      // many messages were sent
-      if (run->io.direction == KVM_EXIT_IO_OUT && run->io.size == 2 &&
-          run->io.port == 0xacf && run->io.count == 1)
-        putchar(*GET_IO_ADDR(run));
-      // TODO: What does the size mean? How does a pin have a size > 1?
-      else if (run->io.direction == KVM_EXIT_IO_IN && run->io.size == 2 &&
-               run->io.port == 0xb5 && run->io.count == 1)
-        ;
-      // *GET_IO_ADDR(run) = wchar_to_cp437(getwchar());
-      else
-        errx(1,
-             "unhandled KVM_EXIT_IO at port 0x%x with direction '%s', "
-             "size %d and count %d",
-             run->io.port, run->io.direction ? "out" : "in", run->io.size,
-             run->io.count);
+      // size is the size of each message (1, 2 or 4 bytes).
+      // count is how many messages were sent
+      if (run->io.direction == KVM_EXIT_IO_OUT && run->io.size == 1 &&
+          run->io.port == 0xEE && run->io.count == 1) {
+        printf("put_io\n");
+        putwchar(*GET_IO_ADDR(run));
+      } else if (run->io.direction == KVM_EXIT_IO_IN && run->io.size == 1 &&
+                 run->io.port == 0xEE && run->io.count == 1) {
+        printf("get_io\n");
+        *GET_IO_ADDR(run) = wchar_to_cp437(getwchar());
+      } else
+        errx(
+            1,
+            "0x%04llx: unhandled KVM_EXIT_IO at port 0x%x with direction '%s', "
+            "size %d and count %d",
+            regs.rip, run->io.port, run->io.direction ? "out" : "in",
+            run->io.size, run->io.count);
       break;
     case KVM_EXIT_FAIL_ENTRY:
-      errx(1, "KVM_EXIT_FAIL_ENTRY: hardware_entry_failure_reason = 0x%llx",
-           run->fail_entry.hardware_entry_failure_reason);
+      errx(1,
+           "0x%04llx: KVM_EXIT_FAIL_ENTRY: hardware_entry_failure_reason = "
+           "0x%llx",
+           regs.rip, run->fail_entry.hardware_entry_failure_reason);
     case KVM_EXIT_INTERNAL_ERROR:
-      // 1 means an illegal instruction
-      errx(1, "KVM_EXIT_INTERNAL_ERROR: suberror = 0x%x",
-           run->internal.suberror);
+      errx(1, "0x%04llx: KVM_EXIT_INTERNAL_ERROR: suberror = 0x%x%s", regs.rip,
+           run->internal.suberror,
+           run->internal.suberror == 1 ? " -- Illegal instruction" : "");
+    case KVM_EXIT_MMIO:
+      // TODO: do something with this. The only instr accessing this is a null
+      // op rn Ideally, I could ioctl kvm into not believing this is mmio. Else,
+      // just suppress this error like how I am doing
+      // TODO: Why? See https://www.kernel.org/doc/html/v5.7/virt/kvm/mmu.html
+      warnx("0x%04llx: unhandled KVM_EXIT_MMIO with first value %d, phys addr "
+            "of 0x%llx, "
+            "len %d, %%si of 0x%llx, is_write '%s'",
+            regs.rip, run->mmio.data[0], run->mmio.phys_addr, run->mmio.len,
+            regs.rsi, run->mmio.is_write ? "true" : "false");
+      break;
     default:
-      errx(1, "exit_reason = 0x%x", run->exit_reason);
+      errx(1, "0x%04llx: exit_reason = 0x%x", regs.rip, run->exit_reason);
     }
   }
-
-  // TODO: Cleanup?
-  // TODO: How to exit properly?
+  // TODO: Cleanup? Do I need to?
+  return 0;
 }
