@@ -6,7 +6,7 @@ all: kvm_sectorlisp sectorlisp/sectorlisp.bin
 
 .PHONY: clean
 clean:
-	$(RM) kvm_sectorlisp sectorlisp_patched.bin
+	$(RM) kvm_sectorlisp sectorlisp/sectorlisp.bin
 
 sectorlisp/sectorlisp.bin:
 	$(MAKE) -C sectorlisp sectorlisp.bin
