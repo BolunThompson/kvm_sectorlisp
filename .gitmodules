@@ -1,4 +1,4 @@
 [submodule "sectorlisp"]
 	path = sectorlisp
-	url = https://github.com/jart/sectorlisp
+	url = https://github.com/bolunthompson/sectorlisp_for_serial_kvm
 
