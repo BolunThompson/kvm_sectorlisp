@@ -257,10 +257,10 @@ int main(void) {
       // instruction) that it isn't supposed to. I use it as a hook to close the
       // program, but if it's exiting weirdly, there may be an actual bug.
 
-      warnx("0x%04llx: unhandled KVM_EXIT_MMIO with first value %d,"
-            "len %d, %%si of 0x%llx, is_write '%s'",
-            regs.rip, run->mmio.data[0], run->mmio.len, regs.rsi,
-            run->mmio.is_write ? "true" : "false");
+      // warnx("0x%04llx: unhandled KVM_EXIT_MMIO with first value %d,"
+      //       "len %d, %%si of 0x%llx, is_write '%s'",
+      //       regs.rip, run->mmio.data[0], run->mmio.len, regs.rsi,
+      //       run->mmio.is_write ? "true" : "false");
       fprintf(stderr, "error: system hung, now quitting.\n");
       errc = 2;
       goto cleanup;
