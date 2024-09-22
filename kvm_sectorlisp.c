@@ -213,7 +213,7 @@ int main(void) {
   struct kvm_run *run;
   if (map_run(kvm, vcpufd, &run, &run_size))
     goto cleanup;
-  // the first ljmp jumps to 0x7c37. The disasembler doesn't list this
+  // the first ljmp jumps to 0x7c37. The disassembler doesn't list this
   // instruction -- it incorrectly disassmebles it as starting at 0x7c36.
   // (TODO: Why? Something to do with x86 encoding?)
 
@@ -261,7 +261,7 @@ int main(void) {
       //       "len %d, %%si of 0x%llx, is_write '%s'",
       //       regs.rip, run->mmio.data[0], run->mmio.len, regs.rsi,
       //       run->mmio.is_write ? "true" : "false");
-      fprintf(stderr, "error: system hung, now quitting.\n");
+      fprintf(stderr, "error: system hung, now quitting\n");
       errc = 2;
       goto cleanup;
     case KVM_EXIT_HLT:
