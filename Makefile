@@ -1,5 +1,5 @@
-CC=gcc
-CFLAGS=-std=c17 -O1 -Wpedantic -Wall -Wextra -g
+CC=clang
+CFLAGS=-std=c23 -O3 -Wpedantic -Wall -Wextra -g
 
 .PHONY: all
 all: kvm_sectorlisp sectorlisp/sectorlisp.bin

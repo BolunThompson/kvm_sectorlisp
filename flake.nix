@@ -1,5 +1,5 @@
 {
-  description = "Yamml Flake";
+  description = "kvm sectorlisp";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
@@ -7,32 +7,21 @@
 
   outputs = { self, nixpkgs }:
     let
-      allSystems = [
-        "x86_64-linux" # 64-bit Intel/AMD Linux
-        # no more for now
-      ];
-
-      forAllSystems = f: nixpkgs.lib.genAttrs allSystems (system: f {
-        pkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
-      });
+      pkgs = nixpkgs.legacyPackages.x86_64-linux;
     in
     {
-      devShells = forAllSystems ({ pkgs }: {
-        default = pkgs.mkShell {
+      devShells.x86_64-linux.default = pkgs.mkShell {
           name = "KVM Sectorlisp Shell";
-          # TODO: Which of these do i actually need?
-          nativeBuildInputs = with pkgs; [
-            gnused
-          ];
-          packages = with pkgs; [
+          nativeBuildInputs = with pkgs; with llvmPackages_19; [
             clang-tools
+            clang
+          ];
+          packages = with pkgs; with llvmPackages_19; [
             gdb
             binutils
             blink
             git
           ];
         };
-      }
-      );
     };
 }

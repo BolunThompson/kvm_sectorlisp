@@ -15,10 +15,13 @@
 #include <unistd.h>
 #include <wchar.h>
 
-#define SECTORLISP_PATH "sectorlisp/sectorlisp.bin"
 // Must be aligned to page boundaries (increments of 0x1000) for mmap
 #define RAM_SIZE 0x10000
 #define GET_IO_ADDR(kvm_run) (((uint8_t *)kvm_run) + kvm_run->io.data_offset)
+
+static const uint8_t SECTORLISP_BIN[] = {
+#embed "sectorlisp/sectorlisp.bin"
+};
 
 // uncomfortable global vars
 static volatile bool running = true;
@@ -104,20 +107,7 @@ int map_mem(const int vmfd, void **mem) {
     return 1;
   };
 
-  int slisp_fd = open(SECTORLISP_PATH, O_RDONLY);
-  if (slisp_fd == -1) {
-    warn(SECTORLISP_PATH);
-    return 1;
-  }
-  void *sectorlisp = mmap(NULL, 512, PROT_READ, MAP_PRIVATE, slisp_fd, 0);
-  if (sectorlisp == MAP_FAILED) {
-    warn("sectorlisp mmap");
-    close(slisp_fd);
-    return 1;
-  }
-  memcpy((uint8_t *)(*mem) + 0x7c00, sectorlisp, 512);
-  munmap(sectorlisp, 512);
-  close(slisp_fd);
+  memcpy((uint8_t *)(*mem) + 0x7c00, SECTORLISP_BIN, 512);
   return 0;
 }
 
