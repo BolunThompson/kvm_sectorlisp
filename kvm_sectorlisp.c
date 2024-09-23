@@ -1,19 +1,14 @@
-#include <assert.h>
 #include <err.h>
 #include <fcntl.h>
 #include <linux/kvm.h>
 #include <signal.h>
-#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
-#include <wchar.h>
 
 // Must be aligned to page boundaries (increments of 0x1000) for mmap
 #define RAM_SIZE 0x10000
