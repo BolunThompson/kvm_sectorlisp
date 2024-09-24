@@ -1,7 +1,7 @@
 # KVM Sectorlisp
 
 Zero dependency virtualization of [sectorlisp](https://github.com/jart/sectorlisp) using KVM.
-For further information, see [my mastodon] post.
+For further information, see [my mastodon](https://hachyderm.io/@bolun/113189699526325226) post.
 
 Requirements:
 - Linux 2.6.20+ built wtih virtualization enabled.
