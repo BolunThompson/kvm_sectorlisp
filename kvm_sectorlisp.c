@@ -84,7 +84,6 @@ int open_vm(int *kvm, int *vmfd, int *vcpufd) {
 // ownership of mem is passed out of the function
 int map_mem(const int vmfd, void **mem) {
   // map empty memory
-  // TODO: Is noreserve necessary?
   *mem = mmap(NULL, RAM_SIZE, PROT_READ | PROT_WRITE,
               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
   if (mem == MAP_FAILED) {
@@ -183,11 +182,6 @@ static inline bool handle_serial_io(struct kvm_run *run) {
 }
 
 int main(void) {
-  // TODO: Is this the correct formatting? It's a bit dense for my taste.
-  // TODO: How to properly cite licenses?
-  // https://lwn.net/Articles/658511/ and https://lwn.net/Articles/658512/
-  // guided me through the KVM API -- thanks!
-
   signal(SIGINT, handle_sigint);
 
   // Make terminal worse to emulate text-mode VGA
@@ -210,7 +204,6 @@ int main(void) {
     goto cleanup;
   // the first ljmp jumps to 0x7c37. The disassembler doesn't list this
   // instruction -- it incorrectly disassmebles it as starting at 0x7c36.
-  // (TODO: Why? Something to do with x86 encoding?)
 
   // on sigint, quit gracefully by setting globar var running
   while (running) {
