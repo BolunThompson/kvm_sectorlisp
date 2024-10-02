@@ -15,7 +15,7 @@
 #define GET_IO_ADDR(kvm_run) (((uint8_t *)kvm_run) + kvm_run->io.data_offset)
 
 static const uint8_t SECTORLISP_BIN[] = {
-#embed "sectorlisp/sectorlisp.bin"
+#embed "sectorlisp.bin"
 };
 
 // uncomfortable global vars
