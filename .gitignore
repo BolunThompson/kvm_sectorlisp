@@ -1,2 +1,6 @@
 kvm_sectorlisp
+kvm_sectorlisp_patched
 .direnv/
+KVM-Sectorlisp
+result
+sectorlisp.bin
